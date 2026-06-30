@@ -39,6 +39,13 @@ const btnDownloadTxt  = $('btnDownloadTxt');
 const btnDownloadHtml = $('btnDownloadHtml');
 const btnScreenshot = $('btnScreenshot');
 
+// Topbar download dropdown
+const btnDownload   = $('btnDownload');
+const dlMenu        = $('dlMenu');
+const dlTxt         = $('dlTxt');
+const dlHtml        = $('dlHtml');
+const dlPng         = $('dlPng');
+
 // Settings inputs
 const selectColorMode   = $('selectColorMode');
 const selectCharSet     = $('selectCharSet');
@@ -511,6 +518,85 @@ function download(filename, content, type) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
+
+// ─── Topbar Download Dropdown ─────────────────────────────────────────────────
+
+function doDownloadTxt() {
+  const text = getPlainText();
+  if (!text.trim()) { showToast('No ASCII to download — start a source first'); return; }
+  const ts   = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+  download(`ascili-${ts}.txt`, text, 'text/plain');
+  showToast('Saved .txt');
+}
+
+function doDownloadHtml() {
+  const html = getStyledHtml();
+  const ts   = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+  download(`ascili-${ts}.html`, html, 'text/html');
+  showToast('Saved .html');
+}
+
+function doScreenshot() {
+  if (!asciiOutput.children.length) { showToast('No ASCII to capture — start a source first'); return; }
+  const canvas = document.createElement('canvas');
+  const rect   = asciiContainer.getBoundingClientRect();
+  canvas.width  = rect.width  * devicePixelRatio;
+  canvas.height = rect.height * devicePixelRatio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  ctx.font         = `${cfg.fontSize}px 'Courier New',monospace`;
+  ctx.textBaseline = 'top';
+
+  const lines = Array.from(asciiOutput.children);
+  const charW  = cfg.fontSize * 0.6;
+  const charH  = cfg.fontSize;
+
+  lines.forEach((div, rowIdx) => {
+    const y = rowIdx * charH;
+    if (cfg.colorMode === 'monochrome') {
+      ctx.fillStyle = '#39ff52';
+      ctx.fillText(div.textContent, 4, y + 4);
+    } else {
+      const spans = div.querySelectorAll('span');
+      if (spans.length === 0) {
+        ctx.fillStyle = '#fff';
+        ctx.fillText(div.textContent, 4, y + 4);
+      } else {
+        let x = 4;
+        spans.forEach(span => {
+          ctx.fillStyle = span.style.color || '#fff';
+          ctx.fillText(span.textContent, x, y + 4);
+          x += span.textContent.length * charW;
+        });
+      }
+    }
+  });
+
+  canvas.toBlob(blob => {
+    const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+    download(`ascili-${ts}.png`, blob, 'image/png');
+    showToast('Screenshot saved');
+  });
+}
+
+// Toggle dropdown open/close
+btnDownload.addEventListener('click', e => {
+  e.stopPropagation();
+  const open = dlMenu.classList.toggle('open');
+  btnDownload.classList.toggle('open', open);
+});
+
+// Close on outside click
+document.addEventListener('click', () => {
+  dlMenu.classList.remove('open');
+  btnDownload.classList.remove('open');
+});
+
+dlTxt.addEventListener('click', () => { doDownloadTxt(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
+dlHtml.addEventListener('click', () => { doDownloadHtml(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
+dlPng.addEventListener('click',  () => { doScreenshot();   dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 
 // ─── Keyboard Shortcuts ───────────────────────────────────────────────────────
 
