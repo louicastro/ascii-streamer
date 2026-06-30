@@ -1,4 +1,5 @@
 import { AsciliEngine, CHAR_SETS } from './engine.js';
+import { AsciliVideoExporter, renderFrameToCanvas } from './exporter.js';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
 
@@ -597,6 +598,263 @@ document.addEventListener('click', () => {
 dlTxt.addEventListener('click', () => { doDownloadTxt(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 dlHtml.addEventListener('click', () => { doDownloadHtml(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 dlPng.addEventListener('click',  () => { doScreenshot();   dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
+dlVideo.addEventListener('click', () => { openConverter(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
+
+// ─── Video Converter ─────────────────────────────────────────────────────────
+
+const cvOverlay        = $('cvOverlay');
+const cvClose          = $('cvClose');
+const cvPickFile       = $('cvPickFile');
+const cvFileInput      = $('cvFileInput');
+const cvFileInfo       = $('cvFileInfo');
+const cvMeta           = $('cvMeta');
+const cvWarning        = $('cvWarning');
+const cvWarningText    = $('cvWarningText');
+const cvCfgColor       = $('cvCfgColor');
+const cvCfgChars       = $('cvCfgChars');
+const cvCfgCols        = $('cvCfgCols');
+const cvCfgFont        = $('cvCfgFont');
+const cvCfgFps         = $('cvCfgFps');
+const cvCfgFmt         = $('cvCfgFmt');
+const cvProgressSection = $('cvProgressSection');
+const cvProgressFill   = $('cvProgressFill');
+const cvProgressPct    = $('cvProgressPct');
+const cvProgressTime   = $('cvProgressTime');
+const cvProgressEta    = $('cvProgressEta');
+const cvPreviewCanvas  = $('cvPreviewCanvas');
+const cvDoneSection    = $('cvDoneSection');
+const cvDoneMeta       = $('cvDoneMeta');
+const cvStart          = $('cvStart');
+const cvStop           = $('cvStop');
+const cvSave           = $('cvSave');
+const cvConvertAnother = $('cvConvertAnother');
+
+const cvExporter = new AsciliVideoExporter();
+
+let cvSourceVideo = null;   // hidden video used by the converter
+let cvBlob        = null;   // result blob after encoding
+let cvMimeType    = '';
+let cvFile        = null;
+
+function fmtTime(s) {
+  if (!isFinite(s) || s == null) return '--:--';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+function fmtBytes(b) {
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  return (b/(1024*1024)).toFixed(1) + ' MB';
+}
+
+function charSetLabel(cs) {
+  const entry = Object.entries(CHAR_SETS).find(([,v]) => v === cs);
+  return entry ? entry[0].charAt(0).toUpperCase() + entry[0].slice(1) : 'Custom';
+}
+
+function detectMime() {
+  const candidates = [
+    'video/mp4;codecs=avc1', 'video/mp4',
+    'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm',
+  ];
+  return candidates.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } }) || 'video/webm';
+}
+
+function cvRefreshSettings() {
+  readConfig();
+  cvCfgColor.textContent = cfg.colorMode.toUpperCase();
+  cvCfgChars.textContent = charSetLabel(cfg.charSet);
+  cvCfgCols.textContent  = cfg.cols + ' cols';
+  cvCfgFont.textContent  = cfg.fontSize + 'px';
+  cvCfgFps.textContent   = cfg.fps + ' FPS';
+  const mime = detectMime();
+  cvCfgFmt.textContent   = mime.includes('mp4') ? 'MP4 (H.264)' : 'WebM (VP9)';
+  cvMimeType = mime;
+}
+
+function cvSetFile(file) {
+  cvFile = file;
+  if (cvSourceVideo) {
+    cvSourceVideo.pause();
+    URL.revokeObjectURL(cvSourceVideo.src);
+  }
+  cvSourceVideo = document.createElement('video');
+  cvSourceVideo.muted   = true;
+  cvSourceVideo.preload = 'metadata';
+  cvSourceVideo.src     = URL.createObjectURL(file);
+
+  cvSourceVideo.addEventListener('loadedmetadata', () => {
+    const dur   = cvSourceVideo.duration;
+    const vw    = cvSourceVideo.videoWidth;
+    const vh    = cvSourceVideo.videoHeight;
+    cvFileInfo.textContent = file.name;
+    cvFileInfo.classList.add('loaded');
+    cvMeta.textContent = `${vw}×${vh}  ·  ${fmtTime(dur)}  ·  ${fmtBytes(file.size)}`;
+
+    // Warn for long videos
+    if (dur > 600) {
+      const eta = fmtTime(dur);
+      cvWarning.style.display = 'flex';
+      cvWarningText.textContent =
+        `This video is ${eta} long. Encoding runs in real time — conversion will take the same duration. ` +
+        `Leave this tab active and your screen on while it runs.`;
+    } else {
+      cvWarning.style.display = 'none';
+    }
+
+    cvStart.disabled = false;
+    // Draw a preview still
+    renderFrameToCanvas(cvSourceVideo, cvPreviewCanvas, cfg);
+  });
+
+  cvSourceVideo.addEventListener('error', () => {
+    cvFileInfo.textContent = 'Error loading file';
+    cvFileInfo.classList.remove('loaded');
+    cvMeta.textContent = '';
+    cvStart.disabled = true;
+  });
+}
+
+function cvResetUI() {
+  cvProgressSection.style.display = 'none';
+  cvDoneSection.style.display     = 'none';
+  cvStart.style.display           = '';
+  cvStop.style.display            = 'none';
+  cvSave.style.display            = 'none';
+  cvConvertAnother.style.display  = 'none';
+  cvProgressFill.style.width      = '0%';
+  cvProgressPct.textContent       = '0%';
+  cvProgressTime.textContent      = '';
+  cvProgressEta.textContent       = '';
+  cvBlob = null;
+}
+
+function openConverter() {
+  cvResetUI();
+  cvRefreshSettings();
+
+  // Pre-load currently active file if there is one
+  if (state.sourceType === 'file' && cvFile) {
+    // already loaded
+  }
+  cvOverlay.classList.add('open');
+}
+
+cvClose.addEventListener('click', () => {
+  if (cvExporter._running) {
+    if (!confirm('Stop the current conversion?')) return;
+    cvExporter.stop();
+  }
+  cvOverlay.classList.remove('open');
+});
+
+cvPickFile.addEventListener('click', () => cvFileInput.click());
+
+cvFileInput.addEventListener('change', () => {
+  const f = cvFileInput.files[0];
+  if (f) {
+    cvResetUI();
+    cvRefreshSettings();
+    cvSetFile(f);
+  }
+  cvFileInput.value = '';
+});
+
+cvStart.addEventListener('click', () => {
+  if (!cvSourceVideo || !cvFile) { showToast('Load a video file first'); return; }
+  readConfig();
+
+  cvProgressSection.style.display = 'block';
+  cvDoneSection.style.display     = 'none';
+  cvStart.style.display           = 'none';
+  cvStop.style.display            = '';
+  cvSave.style.display            = 'none';
+  cvConvertAnother.style.display  = 'none';
+  cvBlob = null;
+
+  // Use the exporter's own internal canvas for recording;
+  // mirror it to the visible preview canvas each frame
+  cvExporter.start(cvSourceVideo, cfg, {
+    targetFps: cfg.fps,
+    onProgress(pct, elapsed, eta) {
+      cvProgressFill.style.width  = (pct * 100).toFixed(1) + '%';
+      cvProgressPct.textContent   = (pct * 100).toFixed(0) + '%';
+      cvProgressTime.textContent  = 'Elapsed: ' + fmtTime(elapsed);
+      cvProgressEta.textContent   = eta != null ? 'ETA: ' + fmtTime(eta) : '';
+
+      // Mirror exporter canvas → visible preview (scaled)
+      const src = cvExporter.canvas;
+      if (src.width && src.height) {
+        const pCtx = cvPreviewCanvas.getContext('2d');
+        cvPreviewCanvas.width  = src.width;
+        cvPreviewCanvas.height = src.height;
+        pCtx.drawImage(src, 0, 0);
+      }
+    },
+    onComplete(blob, mimeType) {
+      cvBlob     = blob;
+      cvMimeType = mimeType;
+
+      cvStop.style.display           = 'none';
+      cvSave.style.display           = '';
+      cvConvertAnother.style.display = '';
+      cvProgressFill.style.width     = '100%';
+      cvProgressPct.textContent      = '100%';
+      cvProgressEta.textContent      = '';
+      cvProgressTime.textContent     = 'Done';
+
+      cvDoneSection.style.display = 'flex';
+      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      cvDoneMeta.textContent = `${fmtBytes(blob.size)}  ·  ${ext.toUpperCase()}  ·  ${cfg.cols} cols`;
+    },
+    onError(msg) {
+      cvStop.style.display  = 'none';
+      cvStart.style.display = '';
+      showToast('Conversion error: ' + msg);
+    },
+  });
+});
+
+cvStop.addEventListener('click', () => {
+  cvExporter.stop();
+  cvStop.style.display  = 'none';
+  cvStart.style.display = '';
+  cvProgressEta.textContent = 'Stopped';
+  showToast('Conversion stopped');
+});
+
+cvSave.addEventListener('click', () => {
+  if (!cvBlob) return;
+  const ext = cvMimeType.includes('mp4') ? 'mp4' : 'webm';
+  const ts  = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+  download(`ascili-${ts}.${ext}`, cvBlob, cvMimeType);
+  showToast('Video saved');
+});
+
+cvConvertAnother.addEventListener('click', () => {
+  cvResetUI();
+  cvFile = null;
+  cvSourceVideo = null;
+  cvFileInfo.textContent = 'No file loaded';
+  cvFileInfo.classList.remove('loaded');
+  cvMeta.textContent = '';
+  cvWarning.style.display = 'none';
+  cvStart.disabled = true;
+});
+
+// Close on backdrop click
+cvOverlay.addEventListener('click', e => {
+  if (e.target === cvOverlay) {
+    if (cvExporter._running) {
+      if (!confirm('Stop the current conversion?')) return;
+      cvExporter.stop();
+    }
+    cvOverlay.classList.remove('open');
+  }
+});
 
 // ─── Keyboard Shortcuts ───────────────────────────────────────────────────────
 
