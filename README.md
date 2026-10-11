@@ -1,5 +1,7 @@
 # ASCILI — ASCII Video Engine
 
+**[Open the live ASCILI website](https://louicastro.github.io/ascii-streamer/)**
+
 ASCILI turns live or recorded video into animated ASCII art in the browser. Use it with a webcam, screen capture, or a local video file, then export the result as text, an image, a rendered video, or subtitles.
 
 ## Features
@@ -79,3 +81,4 @@ Long conversions need direct-to-file browser support to avoid buffering the full
 | `lib/` | Shared workspace libraries |
 
 For Python engine setup and usage, see [`ai_video_engine/README.md`](ai_video_engine/README.md).
+# Ascii-Streamer-2.0
