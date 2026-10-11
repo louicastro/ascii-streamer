@@ -15,13 +15,19 @@
   <header class="topbar" id="topbar">
     <div class="logo">&gt;ASCILI_</div>
 
-    <div class="preset-bar">
+    <!-- Mobile menu toggle -->
+    <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Menu">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+    </button>
+
+    <div class="preset-bar" id="presetBar">
       <span class="preset-label">PRESETS</span>
       <button class="preset-btn active" data-preset="classic" data-testid="preset-classic">[1] Classic Green</button>
       <button class="preset-btn" data-preset="matrix" data-testid="preset-matrix">[2] Matrix Rain</button>
       <button class="preset-btn" data-preset="truecolor" data-testid="preset-truecolor">[3] True Color</button>
       <button class="preset-btn" data-preset="braille" data-testid="preset-braille">[4] Braille Art</button>
       <button class="preset-btn" data-preset="blocks" data-testid="preset-blocks">[5] Block Pixels</button>
+      <button class="preset-btn" data-preset="ultrahd" data-testid="preset-ultrahd">[6] Ultra 2M</button>
     </div>
 
     <div class="source-bar">
@@ -59,9 +65,13 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             Screenshot  <span class="dl-ext">.png</span>
           </button>
+          <button class="dl-item dl-item-record" id="dlRecordVideo" data-testid="dl-record-video">
+            <svg id="dlRecordIcon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
+            <span id="dlRecordLabel">Record Rendered Video</span>  <span class="dl-ext">.mp4</span>
+          </button>
           <button class="dl-item dl-item-video" id="dlVideo" data-testid="dl-video">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-            Convert to Video  <span class="dl-ext">.mp4</span>
+            Convert Full Video File  <span class="dl-ext">.mp4</span>
           </button>
         </div>
       </div>
@@ -73,24 +83,38 @@
 
     <!-- ASCII output area -->
     <div class="ascii-container" id="asciiContainer">
-      <div class="ascii-output" id="asciiOutput"></div>
+      <canvas class="ascii-canvas" id="asciiCanvas"></canvas>
+      <div class="ascii-output" id="asciiOutput" style="display:none"></div>
+
+      <!-- Scanlines overlay (optional CRT effect) -->
+      <div class="scanlines" id="scanlines"></div>
 
       <div class="waiting-overlay" id="waitingOverlay">
         <div class="waiting-dots">
           <span></span><span></span><span></span>
         </div>
         <div class="waiting-text">WAITING FOR VIDEO SIGNAL...</div>
-        <div class="waiting-hint">Click Webcam, Screen, or File to begin</div>
+        <div class="waiting-hint">Click Webcam, Screen, or File — or drag a video here</div>
+      </div>
+
+      <!-- Drag & drop overlay -->
+      <div class="drop-overlay" id="dropOverlay">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <div class="drop-text">DROP VIDEO FILE</div>
       </div>
 
       <!-- Source preview PiP -->
       <div class="source-preview" id="sourcePreview">
         <video id="sourceVideo" autoplay muted playsinline></video>
         <div class="source-preview-label" id="sourceLabel">SOURCE</div>
+        <div class="source-preview-handle">⠿</div>
       </div>
 
       <!-- Fullscreen & pause controls overlay -->
       <div class="output-controls">
+        <button class="icon-btn rec-btn" id="btnRecord" data-testid="btn-record" title="Record ASCII (V)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
+        </button>
         <button class="icon-btn" id="btnPause" data-testid="btn-pause" title="Pause (Space)">
           <svg id="iconPause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
           <svg id="iconPlay" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="display:none"><polygon points="5,3 19,12 5,21"/></svg>
@@ -98,9 +122,32 @@
         <button class="icon-btn" id="btnFullscreen" data-testid="btn-fullscreen" title="Fullscreen (F)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
         </button>
+        <button class="icon-btn" id="btnScanlines" data-testid="btn-scanlines" title="CRT Effect (G)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M2 8h20M2 13h20M2 18h20"/></svg>
+        </button>
         <button class="icon-btn" id="btnSettings" data-testid="btn-settings" title="Settings (S)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
         </button>
+      </div>
+
+      <!-- Recording indicator -->
+      <div class="rec-indicator" id="recIndicator">
+        <span class="rec-dot"></span>
+        <span class="rec-label">REC</span>
+        <span class="rec-timer" id="recTimer">00:00</span>
+      </div>
+
+      <!-- Video timeline (for file playback) -->
+      <div class="vt-bar" id="vtBar">
+        <div class="vt-track" id="vtTrack">
+          <div class="vt-fill" id="vtFill"></div>
+          <div class="vt-thumb" id="vtThumb"></div>
+        </div>
+        <div class="vt-labels">
+          <span class="vt-time" id="vtTime">0:00</span>
+          <span class="vt-speed" id="vtSpeed"></span>
+          <span class="vt-duration" id="vtDuration">0:00</span>
+        </div>
       </div>
     </div>
 
@@ -127,6 +174,20 @@
               <option value="ansi256">ANSI 256</option>
               <option value="truecolor">True Color</option>
             </select>
+          </div>
+
+          <!-- Monochrome color swatches -->
+          <div class="setting-row color-swatch-row" id="colorSwatchRow">
+            <label class="setting-label">Glow Color</label>
+            <div class="color-swatches">
+              <button class="color-swatch active" data-color="#39ff52" style="background:#39ff52" title="Green"></button>
+              <button class="color-swatch" data-color="#ffbb00" style="background:#ffbb00" title="Amber"></button>
+              <button class="color-swatch" data-color="#00f5ff" style="background:#00f5ff" title="Cyan"></button>
+              <button class="color-swatch" data-color="#ff4444" style="background:#ff4444" title="Red"></button>
+              <button class="color-swatch" data-color="#ffffff" style="background:#ffffff" title="White"></button>
+              <button class="color-swatch" data-color="#c084fc" style="background:#c084fc" title="Purple"></button>
+              <button class="color-swatch" data-color="#ff6b9d" style="background:#ff6b9d" title="Pink"></button>
+            </div>
           </div>
 
           <div class="setting-row">
@@ -160,12 +221,12 @@
 
           <div class="setting-row">
             <label class="setting-label">Columns (Width) <span class="setting-value" id="valCols">80</span></label>
-            <input type="range" class="setting-range" id="rangeCols" data-testid="range-cols" min="20" max="300" value="80" />
+            <input type="range" class="setting-range" id="rangeCols" data-testid="range-cols" min="20" max="2000" value="80" />
           </div>
 
           <div class="setting-row">
             <label class="setting-label">Font Size <span class="setting-value" id="valFontSize">10</span>px</label>
-            <input type="range" class="setting-range" id="rangeFontSize" data-testid="range-font-size" min="4" max="24" value="10" />
+            <input type="range" class="setting-range" id="rangeFontSize" data-testid="range-font-size" min="1" max="24" value="10" />
           </div>
 
           <div class="setting-row">
@@ -176,6 +237,8 @@
               <option value="24">24 FPS</option>
               <option value="30" selected>30 FPS</option>
               <option value="60">60 FPS</option>
+              <option value="90">90 FPS</option>
+              <option value="120">120 FPS</option>
             </select>
           </div>
         </div>
@@ -204,6 +267,50 @@
           </div>
         </div>
 
+        <div class="settings-section" id="aiVisionSection">
+          <div class="section-label">AI VISION PERCEPTION</div>
+
+          <div class="setting-row">
+            <label class="setting-label">AI Edge Detection</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="checkAiEdge" checked data-testid="check-ai-edge" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label">Edge Sensitivity <span class="setting-value" id="valEdgeThreshold">16</span>%</label>
+            <input type="range" class="setting-range" id="rangeEdgeThreshold" data-testid="range-edge-threshold" min="5" max="50" value="16" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label">Temporal Anti-Flicker</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="checkTemporal" checked data-testid="check-temporal" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label">Adaptive Dynamic Range</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="checkAdaptiveContrast" checked data-testid="check-adaptive-contrast" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="section-label">EFFECTS</div>
+          <div class="setting-row">
+            <label class="setting-label">CRT Scanlines</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="checkScanlines" data-testid="check-scanlines" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
         <div class="settings-section">
           <div class="section-label">EXPORT</div>
           <div class="export-row">
@@ -221,6 +328,8 @@
             <div class="shortcut-row"><span>Pause / Resume</span><kbd>Space</kbd></div>
             <div class="shortcut-row"><span>Toggle Settings</span><kbd>S</kbd></div>
             <div class="shortcut-row"><span>Copy ASCII</span><kbd>C</kbd></div>
+            <div class="shortcut-row"><span>Record / Stop</span><kbd>V</kbd></div>
+            <div class="shortcut-row"><span>CRT Scanlines</span><kbd>G</kbd></div>
             <div class="shortcut-row"><span>Reset Settings</span><kbd>R</kbd></div>
             <div class="shortcut-row"><span>Quick Presets</span><kbd>1 - 5</kbd></div>
           </div>
@@ -240,11 +349,11 @@
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       LATENCY: <span class="stat-val" id="statLatency">000</span>ms
     </div>
-    <div class="stat">
+    <div class="stat stat-hideable">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>
       CHARS: <span class="stat-val" id="statChars">0</span>
     </div>
-    <div class="stat">
+    <div class="stat stat-hideable">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M7 12h10M12 7v10"/></svg>
       DIMS: <span class="stat-val" id="statDims">0x0</span>
     </div>
@@ -282,6 +391,11 @@
             <input type="file" id="cvFileInput" accept="video/*" style="display:none" data-testid="cv-file-input" />
           </div>
           <div class="cv-meta" id="cvMeta"></div>
+          <!-- Drag & drop zone for converter -->
+          <div class="cv-drop-zone" id="cvDropZone">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>or drag a video file here</span>
+          </div>
         </div>
 
         <!-- Render settings (mirrors main settings, user can override) -->
@@ -292,8 +406,33 @@
             <div class="cv-stat-row"><span>Character Set</span><span class="cv-val" id="cvCfgChars">—</span></div>
             <div class="cv-stat-row"><span>Columns</span><span class="cv-val" id="cvCfgCols">—</span></div>
             <div class="cv-stat-row"><span>Font Size</span><span class="cv-val" id="cvCfgFont">—</span></div>
-            <div class="cv-stat-row"><span>Output FPS</span><span class="cv-val" id="cvCfgFps">—</span></div>
             <div class="cv-stat-row"><span>Output Format</span><span class="cv-val" id="cvCfgFmt">detecting...</span></div>
+          </div>
+        </div>
+
+        <!-- Resolution & FPS overrides -->
+        <div class="cv-section">
+          <div class="cv-section-label">OUTPUT QUALITY</div>
+          <div class="cv-grid">
+            <div class="cv-stat-row">
+              <span>Resolution</span>
+              <select class="setting-select cv-select" id="cvCfgRes" data-testid="cv-resolution">
+                <option value="auto">Auto (from settings)</option>
+                <option value="720p">720p (1280×720)</option>
+                <option value="1080p" selected>1080p (1920×1080)</option>
+                <option value="4k">4K (3840×2160)</option>
+              </select>
+            </div>
+            <div class="cv-stat-row">
+              <span>Output FPS</span>
+              <select class="setting-select cv-select" id="cvCfgFpsOverride" data-testid="cv-fps">
+                <option value="24">24 FPS</option>
+                <option value="30" selected>30 FPS</option>
+                <option value="60">60 FPS</option>
+                <option value="90">90 FPS</option>
+                <option value="120">120 FPS</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -314,6 +453,8 @@
           </div>
           <div class="cv-progress-meta">
             <span id="cvProgressPct">0%</span>
+            <span id="cvProgressFrames"></span>
+            <span class="cv-speed-badge" id="cvSpeedBadge"></span>
             <span id="cvProgressTime"></span>
             <span id="cvProgressEta"></span>
           </div>

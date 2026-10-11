@@ -1,14 +1,15 @@
 import { AsciliEngine, CHAR_SETS } from './engine.js';
-import { AsciliVideoExporter, renderFrameToCanvas } from './exporter.js';
+import { AsciliVideoExporter, AsciliLiveRecorder, renderFrameToCanvas } from './exporter.js';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
 
 const PRESETS = {
-  classic:    { colorMode:'monochrome', charSet:'standard', invertChars:true,  cols:80,  fontSize:10, fps:30, brightness:0,  contrast:10,  gamma:0,  saturation:0   },
-  matrix:     { colorMode:'monochrome', charSet:'extended', invertChars:false, cols:100, fontSize:8,  fps:30, brightness:5,  contrast:20,  gamma:0,  saturation:0   },
-  truecolor:  { colorMode:'truecolor',  charSet:'standard', invertChars:false, cols:80,  fontSize:10, fps:24, brightness:0,  contrast:0,   gamma:0,  saturation:20  },
-  braille:    { colorMode:'grayscale',  charSet:'braille',  invertChars:false, cols:120, fontSize:10, fps:24, brightness:5,  contrast:15,  gamma:0,  saturation:0   },
-  blocks:     { colorMode:'ansi256',    charSet:'block',    invertChars:false, cols:80,  fontSize:12, fps:24, brightness:0,  contrast:5,   gamma:0,  saturation:10  },
+  classic:    { colorMode:'monochrome', charSet:'standard', invertChars:true,  cols:80,  fontSize:10, fps:30, brightness:0,  contrast:10,  gamma:0,  saturation:0,   enableEdgeDetection:true,  edgeThreshold:0.18, temporalSmoothing:0.35, adaptiveContrast:true },
+  matrix:     { colorMode:'monochrome', charSet:'extended', invertChars:false, cols:100, fontSize:8,  fps:30, brightness:5,  contrast:20,  gamma:0,  saturation:0,   enableEdgeDetection:true,  edgeThreshold:0.15, temporalSmoothing:0.40, adaptiveContrast:true },
+  truecolor:  { colorMode:'truecolor',  charSet:'standard', invertChars:false, cols:80,  fontSize:10, fps:24, brightness:0,  contrast:0,   gamma:0,  saturation:20,  enableEdgeDetection:true,  edgeThreshold:0.16, temporalSmoothing:0.30, adaptiveContrast:true },
+  braille:    { colorMode:'grayscale',  charSet:'braille',  invertChars:false, cols:120, fontSize:10, fps:24, brightness:5,  contrast:15,  gamma:0,  saturation:0,   enableEdgeDetection:false, edgeThreshold:0.20, temporalSmoothing:0.25, adaptiveContrast:true },
+  blocks:     { colorMode:'ansi256',    charSet:'block',    invertChars:false, cols:80,  fontSize:12, fps:24, brightness:0,  contrast:5,   gamma:0,  saturation:10,  enableEdgeDetection:false, edgeThreshold:0.20, temporalSmoothing:0.20, adaptiveContrast:true },
+  ultrahd:    { colorMode:'truecolor',  charSet:'standard', invertChars:false, cols:1920, fontSize:1, fps:120, brightness:0, contrast:0,   gamma:0,  saturation:15,  enableEdgeDetection:true,  edgeThreshold:0.16, temporalSmoothing:0.0, adaptiveContrast:true },
 };
 
 // ─── DOM Refs ────────────────────────────────────────────────────────────────
@@ -16,6 +17,7 @@ const PRESETS = {
 const $ = id => document.getElementById(id);
 
 const asciiOutput   = $('asciiOutput');
+const asciiCanvas   = $('asciiCanvas');
 const asciiContainer = $('asciiContainer');
 const waitingOverlay = $('waitingOverlay');
 const sourceVideo   = $('sourceVideo');
@@ -23,6 +25,15 @@ const sourcePreview = $('sourcePreview');
 const sourceLabel   = $('sourceLabel');
 const settingsPanel = $('settingsPanel');
 const toast         = $('toast');
+const scanlines     = $('scanlines');
+const dropOverlay   = $('dropOverlay');
+
+// AI Vision Refs
+const checkAiEdge            = $('checkAiEdge');
+const rangeEdgeThreshold     = $('rangeEdgeThreshold');
+const valEdgeThreshold       = $('valEdgeThreshold');
+const checkTemporal          = $('checkTemporal');
+const checkAdaptiveContrast  = $('checkAdaptiveContrast');
 
 // Controls
 const btnWebcam     = $('btnWebcam');
@@ -34,11 +45,35 @@ const iconPause     = $('iconPause');
 const iconPlay      = $('iconPlay');
 const btnFullscreen = $('btnFullscreen');
 const btnSettings   = $('btnSettings');
+const btnScanlines  = $('btnScanlines');
 const btnResetSettings = $('btnResetSettings');
 const btnCopy       = $('btnCopy');
 const btnDownloadTxt  = $('btnDownloadTxt');
 const btnDownloadHtml = $('btnDownloadHtml');
 const btnScreenshot = $('btnScreenshot');
+const mobileMenuBtn = $('mobileMenuBtn');
+const presetBar     = $('presetBar');
+
+// Record button & indicator
+const btnRecord     = $('btnRecord');
+const recIndicator  = $('recIndicator');
+const recTimer      = $('recTimer');
+
+// Video timeline
+const vtBar      = $('vtBar');
+const vtTrack    = $('vtTrack');
+const vtFill     = $('vtFill');
+const vtThumb    = $('vtThumb');
+const vtTime     = $('vtTime');
+const vtDuration = $('vtDuration');
+const vtSpeed    = $('vtSpeed');
+
+// Color swatches
+const colorSwatchRow = $('colorSwatchRow');
+const colorSwatches  = document.querySelectorAll('.color-swatch');
+
+// Scanlines toggle in settings
+const checkScanlines = $('checkScanlines');
 
 // Topbar download dropdown
 const btnDownload   = $('btnDownload');
@@ -46,6 +81,9 @@ const dlMenu        = $('dlMenu');
 const dlTxt         = $('dlTxt');
 const dlHtml        = $('dlHtml');
 const dlPng         = $('dlPng');
+const dlRecordVideo = $('dlRecordVideo');
+const dlRecordLabel = $('dlRecordLabel');
+const dlVideo       = $('dlVideo');
 
 // Settings inputs
 const selectColorMode   = $('selectColorMode');
@@ -81,16 +119,21 @@ const presetBtns = document.querySelectorAll('.preset-btn');
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const state = {
-  sourceType:   'none',   // 'webcam' | 'screen' | 'file' | 'none'
-  running:      false,
-  paused:       false,
-  stream:       null,     // MediaStream (webcam / screen)
-  rafId:        null,
-  lastFrameTs:  0,
-  frameCount:   0,
-  fpsAccum:     0,
-  lastFpsTs:    0,
-  actualFps:    0,
+  sourceType:    'none',   // 'webcam' | 'screen' | 'file' | 'none'
+  currentFile:   null,     // uploaded File object for seamless export
+  running:       false,
+  paused:        false,
+  stream:        null,     // MediaStream (webcam / screen)
+  rafId:         null,
+  lastFrameTs:   0,
+  frameCount:    0,
+  fpsAccum:      0,
+  lastFpsTs:     0,
+  actualFps:     0,
+  monoColor:     '#39ff52',
+  scanlinesOn:   false,
+  vtSeeking:     false,   // user is scrubbing the timeline
+  currentScale:  0,       // auto-fit scale factor
 };
 
 // Config (mirrors UI controls)
@@ -105,9 +148,70 @@ const cfg = {
   contrast:    0,
   gamma:       0,
   saturation:  0,
+  // AI Vision parameters
+  enableEdgeDetection: true,
+  edgeThreshold:       0.16,
+  temporalSmoothing:   0.35,
+  adaptiveContrast:    true,
 };
 
 const engine = new AsciliEngine();
+if (typeof window !== 'undefined') {
+  window.__ascili = { engine, state, cfg, AsciliVideoExporter, AsciliLiveRecorder, get cvExporter() { return cvExporter; } };
+}
+
+// ─── Auto-Fit Container Layout (Fixed, Centered, Smooth Scaling) ─────────────
+
+let lastLayoutRows = 0;
+let lastLayoutCols = 0;
+
+function updateAsciiLayout(rows, cols) {
+  if (!rows || !cols) return;
+  lastLayoutRows = rows;
+  lastLayoutCols = cols;
+
+  const cw = asciiContainer.clientWidth;
+  const ch = asciiContainer.clientHeight;
+  if (!cw || !ch) return;
+
+  const availW = Math.max(40, cw - 16);
+  const availH = Math.max(40, ch - 16);
+
+  // Character cell aspect ratio: Courier New character width / height ≈ 0.601
+  const gridAspect = (cols * 0.601) / rows;
+  const containerAspect = availW / availH;
+
+  let cssW, cssH;
+  if (containerAspect > gridAspect) {
+    cssH = availH;
+    cssW = Math.round(cssH * gridAspect);
+  } else {
+    cssW = availW;
+    cssH = Math.round(cssW / gridAspect);
+  }
+
+  cssW = Math.max(32, cssW);
+  cssH = Math.max(32, cssH);
+
+  asciiCanvas.style.width  = cssW + 'px';
+  asciiCanvas.style.height = cssH + 'px';
+
+  // Physical buffer resolution for retina / high-DPI displays
+  const dpr  = Math.min(2, window.devicePixelRatio || 1);
+  const bufW = Math.max(2, Math.round(cssW * dpr));
+  const bufH = Math.max(2, Math.round(cssH * dpr));
+
+  if (asciiCanvas.width !== bufW || asciiCanvas.height !== bufH) {
+    asciiCanvas.width  = bufW;
+    asciiCanvas.height = bufH;
+  }
+}
+
+window.addEventListener('resize', () => {
+  if (lastLayoutRows && lastLayoutCols) {
+    updateAsciiLayout(lastLayoutRows, lastLayoutCols);
+  }
+});
 
 // ─── Toast ───────────────────────────────────────────────────────────────────
 
@@ -132,6 +236,15 @@ function readConfig() {
   cfg.gamma       = parseInt(rangeGamma.value, 10);
   cfg.saturation  = parseInt(rangeSaturation.value, 10);
 
+  // AI Vision controls
+  if (checkAiEdge) cfg.enableEdgeDetection = checkAiEdge.checked;
+  if (rangeEdgeThreshold) {
+    cfg.edgeThreshold = parseInt(rangeEdgeThreshold.value, 10) / 100.0;
+    if (valEdgeThreshold) valEdgeThreshold.textContent = rangeEdgeThreshold.value;
+  }
+  if (checkTemporal) cfg.temporalSmoothing = checkTemporal.checked ? 0.35 : 0.0;
+  if (checkAdaptiveContrast) cfg.adaptiveContrast = checkAdaptiveContrast.checked;
+
   const cs = selectCharSet.value;
   if (cs === 'custom') {
     cfg.charSet = inputCustomChars.value || CHAR_SETS.standard;
@@ -141,20 +254,24 @@ function readConfig() {
 
   customCharRow.style.display = cs === 'custom' ? 'block' : 'none';
 
+  // Show/hide color swatches based on monochrome mode
+  colorSwatchRow.style.display = cfg.colorMode === 'monochrome' ? 'block' : 'none';
+
   // Apply font size to output
   asciiOutput.style.fontSize    = cfg.fontSize + 'px';
   asciiOutput.style.lineHeight  = '1.0';
   asciiOutput.style.letterSpacing = '0';
 
-  // Apply monochrome green glow
+  // Apply monochrome color or default
   if (cfg.colorMode === 'monochrome') {
-    asciiOutput.style.color      = 'var(--green)';
-    asciiOutput.style.textShadow = '0 0 6px rgba(57,255,82,0.3)';
+    asciiOutput.style.color      = state.monoColor;
+    asciiOutput.style.textShadow = `0 0 6px ${state.monoColor}44`;
   } else {
     asciiOutput.style.color      = '#fff';
     asciiOutput.style.textShadow = 'none';
   }
 
+  state.currentScale = 0;
   engine.reset();
 }
 
@@ -166,9 +283,6 @@ function applyPreset(name) {
 
   selectColorMode.value    = p.colorMode;
   selectCharSet.value      = p.charSet in CHAR_SETS ? p.charSet : 'standard';
-  // find charSet key
-  const csKey = Object.entries(CHAR_SETS).find(([,v]) => v === p.charSet)?.[0] || 'standard';
-  selectCharSet.value      = csKey;
   checkInvert.checked      = p.invertChars;
   rangeCols.value          = p.cols;   valCols.textContent = p.cols;
   rangeFontSize.value      = p.fontSize; valFontSize.textContent = p.fontSize;
@@ -178,9 +292,58 @@ function applyPreset(name) {
   rangeGamma.value         = p.gamma;      valGamma.textContent      = p.gamma;
   rangeSaturation.value    = p.saturation; valSaturation.textContent = p.saturation;
 
+  // AI Vision Preset values
+  if (checkAiEdge) checkAiEdge.checked = p.enableEdgeDetection ?? true;
+  if (rangeEdgeThreshold) {
+    rangeEdgeThreshold.value = Math.round((p.edgeThreshold ?? 0.16) * 100);
+    if (valEdgeThreshold) valEdgeThreshold.textContent = rangeEdgeThreshold.value;
+  }
+  if (checkTemporal) checkTemporal.checked = (p.temporalSmoothing ?? 0.35) > 0;
+  if (checkAdaptiveContrast) checkAdaptiveContrast.checked = p.adaptiveContrast ?? true;
+
   presetBtns.forEach(b => b.classList.toggle('active', b.dataset.preset === name));
   readConfig();
   showToast('Preset: ' + name.toUpperCase());
+}
+
+// ─── Color Swatches ──────────────────────────────────────────────────────────
+
+colorSwatches.forEach(swatch => {
+  swatch.addEventListener('click', () => {
+    state.monoColor = swatch.dataset.color;
+    colorSwatches.forEach(s => s.classList.remove('active'));
+    swatch.classList.add('active');
+    // Update CSS variable for engine use
+    document.documentElement.style.setProperty('--green', state.monoColor);
+    readConfig();
+    showToast('Color: ' + swatch.title);
+  });
+});
+
+// ─── Scanlines Toggle ────────────────────────────────────────────────────────
+
+function toggleScanlines() {
+  state.scanlinesOn = !state.scanlinesOn;
+  scanlines.classList.toggle('active', state.scanlinesOn);
+  btnScanlines.classList.toggle('active', state.scanlinesOn);
+  if (checkScanlines) checkScanlines.checked = state.scanlinesOn;
+}
+
+btnScanlines.addEventListener('click', toggleScanlines);
+if (checkScanlines) {
+  checkScanlines.addEventListener('change', () => {
+    state.scanlinesOn = checkScanlines.checked;
+    scanlines.classList.toggle('active', state.scanlinesOn);
+    btnScanlines.classList.toggle('active', state.scanlinesOn);
+  });
+}
+
+// ─── Mobile menu ─────────────────────────────────────────────────────────────
+
+if (mobileMenuBtn) {
+  mobileMenuBtn.addEventListener('click', () => {
+    presetBar.classList.toggle('mobile-visible');
+  });
 }
 
 // ─── Stats Update ────────────────────────────────────────────────────────────
@@ -195,6 +358,138 @@ function updateStats(dims, latency) {
   statMode.classList.toggle('active', state.running);
 }
 
+// ─── Video Timeline ──────────────────────────────────────────────────────────
+
+function fmtVtTime(s) {
+  if (!isFinite(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+function updateTimeline() {
+  if (state.sourceType !== 'file' || !sourceVideo.duration) {
+    vtBar.classList.remove('visible');
+    return;
+  }
+  vtBar.classList.add('visible');
+
+  const pct = (sourceVideo.currentTime / sourceVideo.duration) * 100;
+  vtFill.style.width = pct + '%';
+  vtThumb.style.left = pct + '%';
+  vtTime.textContent     = fmtVtTime(sourceVideo.currentTime);
+  vtDuration.textContent = fmtVtTime(sourceVideo.duration);
+}
+
+// Timeline scrubbing
+vtTrack.addEventListener('mousedown', e => {
+  state.vtSeeking = true;
+  seekToPosition(e);
+  const onMove = ev => seekToPosition(ev);
+  const onUp   = () => {
+    state.vtSeeking = false;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+});
+
+vtTrack.addEventListener('touchstart', e => {
+  state.vtSeeking = true;
+  seekToPosition(e.touches[0]);
+}, { passive: true });
+vtTrack.addEventListener('touchmove', e => {
+  seekToPosition(e.touches[0]);
+}, { passive: true });
+vtTrack.addEventListener('touchend', () => {
+  state.vtSeeking = false;
+}, { passive: true });
+
+function seekToPosition(e) {
+  const rect = vtTrack.getBoundingClientRect();
+  const x    = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+  const pct  = x / rect.width;
+  if (sourceVideo.duration) {
+    sourceVideo.currentTime = pct * sourceVideo.duration;
+    updateTimeline();
+  }
+}
+
+// ─── Live Recording ──────────────────────────────────────────────────────────
+
+const liveRecorder = new AsciliLiveRecorder();
+let recTimerInterval = null;
+
+function fmtRecTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+function startLiveRecording() {
+  if (!state.running) { showToast('Start a video source first'); return; }
+  if (liveRecorder.running) { stopLiveRecording(); return; }
+
+  readConfig();
+  liveRecorder.startRecording(cfg, {
+    targetFps: cfg.fps,
+    resolution: '1080p',
+    videoWidth:  sourceVideo.videoWidth  || 640,
+    videoHeight: sourceVideo.videoHeight || 480,
+    onComplete(blob, mimeType) {
+      // Auto-download on stop
+      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const ts  = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+      download(`ascili-rec-${ts}.${ext}`, blob, mimeType);
+      showToast('Recording saved — ' + fmtBytes(blob.size));
+      updateRecUI(false);
+    },
+    onError(msg) {
+      showToast('Recording error: ' + msg);
+      updateRecUI(false);
+    },
+  });
+
+  updateRecUI(true);
+  showToast('Recording started');
+}
+
+function stopLiveRecording() {
+  liveRecorder.stopRecording();
+  // onComplete callback will handle download and UI
+}
+
+function updateRecUI(isRecording) {
+  btnRecord.classList.toggle('recording', isRecording);
+  recIndicator.classList.toggle('visible', isRecording);
+
+  if (dlRecordVideo) {
+    dlRecordVideo.classList.toggle('recording', isRecording);
+    if (dlRecordLabel) {
+      dlRecordLabel.textContent = isRecording ? 'Stop & Download Video' : 'Record Rendered Video';
+    }
+  }
+
+  if (isRecording) {
+    recTimerInterval = setInterval(() => {
+      recTimer.textContent = fmtRecTime(liveRecorder.elapsed);
+    }, 500);
+  } else {
+    clearInterval(recTimerInterval);
+    recTimerInterval = null;
+    recTimer.textContent = '00:00';
+  }
+}
+
+btnRecord.addEventListener('click', () => {
+  if (liveRecorder.running) {
+    stopLiveRecording();
+  } else {
+    startLiveRecording();
+  }
+});
+
 // ─── Render Loop ─────────────────────────────────────────────────────────────
 
 function renderLoop(ts) {
@@ -208,12 +503,26 @@ function renderLoop(ts) {
   if (!sourceVideo.videoWidth) return;
 
   const t0 = performance.now();
-  readConfig();
-  const dims = engine.renderFrame(sourceVideo, asciiOutput, cfg);
+  const dims = engine.renderFrame(sourceVideo, asciiCanvas, {
+    ...cfg,
+    monoColor: state.monoColor,
+    scanlines: state.scanlinesOn,
+  });
+  updateAsciiLayout(dims.rows, dims.cols);
   const latency = performance.now() - t0;
+
+  // If live recording is active, capture this frame
+  if (liveRecorder.running) {
+    liveRecorder.captureFrame(sourceVideo, cfg);
+  }
 
   state.lastFrameTs = ts;
   state.frameCount++;
+
+  // Update timeline for file playback
+  if (state.sourceType === 'file' && !state.vtSeeking) {
+    updateTimeline();
+  }
 
   // FPS counter (update every second)
   if (ts - state.lastFpsTs >= 1000) {
@@ -242,6 +551,11 @@ function stopRenderLoop() {
 // ─── Source Management ───────────────────────────────────────────────────────
 
 function stopCurrentSource() {
+  // Stop live recording if active
+  if (liveRecorder.running) {
+    stopLiveRecording();
+  }
+
   if (state.stream) {
     state.stream.getTracks().forEach(t => t.stop());
     state.stream = null;
@@ -252,6 +566,7 @@ function stopCurrentSource() {
   state.sourceType = 'none';
   waitingOverlay.classList.remove('hidden');
   sourcePreview.classList.remove('visible');
+  vtBar.classList.remove('visible');
   engine.reset();
 
   document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
@@ -263,8 +578,9 @@ function stopCurrentSource() {
 
 function attachStream(stream, type) {
   stopCurrentSource();
-  state.stream     = stream;
-  state.sourceType = type;
+  state.stream      = stream;
+  state.sourceType  = type;
+  state.currentFile = null;
   sourceVideo.srcObject = stream;
   sourceVideo.play().then(() => {
     waitingOverlay.classList.add('hidden');
@@ -278,19 +594,67 @@ function attachStream(stream, type) {
 
 function attachFile(file) {
   stopCurrentSource();
-  state.sourceType = 'file';
+  state.sourceType  = 'file';
+  state.currentFile = file;
   const url = URL.createObjectURL(file);
   sourceVideo.src   = url;
   sourceVideo.loop  = true;
+  sourceVideo.muted = true;
   sourceVideo.play().then(() => {
     waitingOverlay.classList.add('hidden');
     sourcePreview.classList.add('visible');
     sourceLabel.textContent = 'FILE';
     startRenderLoop();
+    updateTimeline();
   }).catch(err => {
     showToast('ERROR: ' + err.message);
   });
 }
+
+// ─── Drag & Drop ─────────────────────────────────────────────────────────────
+
+let dragCounter = 0;
+
+asciiContainer.addEventListener('dragenter', e => {
+  e.preventDefault();
+  dragCounter++;
+  asciiContainer.classList.add('drop-active');
+  dropOverlay.classList.add('visible');
+});
+
+asciiContainer.addEventListener('dragover', e => {
+  e.preventDefault();
+});
+
+asciiContainer.addEventListener('dragleave', e => {
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    asciiContainer.classList.remove('drop-active');
+    dropOverlay.classList.remove('visible');
+  }
+});
+
+asciiContainer.addEventListener('drop', e => {
+  e.preventDefault();
+  dragCounter = 0;
+  asciiContainer.classList.remove('drop-active');
+  dropOverlay.classList.remove('visible');
+
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('video/')) {
+    attachFile(file);
+    btnFile.classList.add('active');
+    showToast('Loaded: ' + file.name);
+  } else {
+    showToast('Please drop a video file');
+  }
+});
+
+// Also support drop on the whole document as a fallback
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => e.preventDefault());
 
 // ─── Source Buttons ───────────────────────────────────────────────────────────
 
@@ -386,7 +750,7 @@ btnResetSettings.addEventListener('click', () => {
 function bindRange(rangeEl, labelEl) {
   rangeEl.addEventListener('input', () => {
     labelEl.textContent = rangeEl.value;
-    engine.reset();
+    readConfig();
   });
 }
 bindRange(rangeCols,       valCols);
@@ -396,13 +760,19 @@ bindRange(rangeContrast,   valContrast);
 bindRange(rangeGamma,      valGamma);
 bindRange(rangeSaturation, valSaturation);
 
-selectColorMode.addEventListener('change', () => engine.reset());
+if (rangeEdgeThreshold && valEdgeThreshold) bindRange(rangeEdgeThreshold, valEdgeThreshold);
+if (checkAiEdge) checkAiEdge.addEventListener('change', () => readConfig());
+if (checkTemporal) checkTemporal.addEventListener('change', () => readConfig());
+if (checkAdaptiveContrast) checkAdaptiveContrast.addEventListener('change', () => readConfig());
+
+selectColorMode.addEventListener('change', () => readConfig());
 selectCharSet.addEventListener('change', () => {
   customCharRow.style.display = selectCharSet.value === 'custom' ? 'block' : 'none';
-  engine.reset();
+  readConfig();
 });
-inputCustomChars.addEventListener('input', () => engine.reset());
-checkInvert.addEventListener('change', () => engine.reset());
+inputCustomChars.addEventListener('input', () => readConfig());
+checkInvert.addEventListener('change', () => readConfig());
+selectFps.addEventListener('change', () => readConfig());
 
 // ─── Preset buttons ───────────────────────────────────────────────────────────
 
@@ -410,104 +780,74 @@ presetBtns.forEach(btn => {
   btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
 });
 
+// ─── Screenshot Helper (shared) ──────────────────────────────────────────────
+
+function captureAsciiToCanvas() {
+  return asciiCanvas;
+}
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 function getPlainText() {
-  return Array.from(asciiOutput.children)
-    .map(div => div.textContent)
-    .join('\n');
+  return engine.getPlainText();
 }
 
 function getStyledHtml() {
-  const colorVars = {
-    monochrome: '#39ff52',
-    grayscale:  '',
-    truecolor:  '',
-    ansi16:     '',
-    ansi256:    '',
-  };
-  const bg    = '#000';
-  const color = cfg.colorMode === 'monochrome' ? '#39ff52' : '#fff';
-  const rows  = Array.from(asciiOutput.children).map(d => d.innerHTML || d.textContent).join('\n');
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8"/>
-<title>ASCILI Export</title>
-<style>
-body{margin:0;background:${bg};padding:8px}
-pre{font-family:'Courier New',monospace;font-size:${cfg.fontSize}px;line-height:1;color:${color};white-space:pre;overflow:auto}
-</style>
-</head>
-<body><pre>${rows}</pre></body>
-</html>`;
+  return engine.getStyledHtml({
+    colorMode: cfg.colorMode,
+    monoColor: state.monoColor,
+    fontSize: cfg.fontSize,
+  });
+}
+
+function fmtBytes(b) {
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  return (b/(1024*1024)).toFixed(1) + ' MB';
 }
 
 btnCopy.addEventListener('click', async () => {
-  const text = getPlainText();
-  if (!text.trim()) { showToast('Nothing to copy'); return; }
+  if (!state.running && !engine._lastCols) { showToast('Start a video source first'); return; }
+  showToast('Preparing ASCII copy...');
   try {
+    const text = await engine.exportPlainTextAsync();
+    if (!text.trim()) { showToast('Nothing to copy'); return; }
     await navigator.clipboard.writeText(text);
-    showToast('ASCII copied to clipboard');
+    const count = (engine._lastCols * engine._lastRows).toLocaleString();
+    showToast(`Copied ${count} characters!`);
   } catch {
     showToast('Copy failed');
   }
 });
 
-btnDownloadTxt.addEventListener('click', () => {
-  const text = getPlainText();
+btnDownloadTxt.addEventListener('click', async () => {
+  if (!state.running && !engine._lastCols) { showToast('Start a video source first'); return; }
+  showToast('Exporting text...');
+  const text = await engine.exportPlainTextAsync();
   if (!text.trim()) { showToast('Nothing to export'); return; }
   download('ascili-export.txt', text, 'text/plain');
-  showToast('Saved ascili-export.txt');
+  const count = (engine._lastCols * engine._lastRows).toLocaleString();
+  showToast(`Saved ${count} chars as .txt`);
 });
 
-btnDownloadHtml.addEventListener('click', () => {
-  const html = getStyledHtml();
+btnDownloadHtml.addEventListener('click', async () => {
+  if (!state.running && !engine._lastCols) { showToast('Start a video source first'); return; }
+  showToast('Exporting HTML...');
+  const html = await engine.exportStyledHtmlAsync({
+    monoColor: state.monoColor,
+    fontSize: cfg.fontSize,
+  });
+  if (!html.trim()) { showToast('Nothing to export'); return; }
   download('ascili-export.html', html, 'text/html');
-  showToast('Saved ascili-export.html');
+  showToast('Saved .html');
 });
 
 btnScreenshot.addEventListener('click', () => {
-  const canvas = document.createElement('canvas');
-  const rect   = asciiContainer.getBoundingClientRect();
-  canvas.width  = rect.width  * devicePixelRatio;
-  canvas.height = rect.height * devicePixelRatio;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(devicePixelRatio, devicePixelRatio);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, rect.width, rect.height);
-  ctx.font         = `${cfg.fontSize}px 'Courier New',monospace`;
-  ctx.textBaseline = 'top';
-
-  const lines = Array.from(asciiOutput.children);
-  const charW  = cfg.fontSize * 0.6;
-  const charH  = cfg.fontSize;
-
-  lines.forEach((div, rowIdx) => {
-    const y = rowIdx * charH;
-    if (cfg.colorMode === 'monochrome') {
-      ctx.fillStyle = '#39ff52';
-      ctx.fillText(div.textContent, 4, y + 4);
-    } else {
-      // Draw span by span
-      const spans = div.querySelectorAll('span');
-      if (spans.length === 0) {
-        ctx.fillStyle = '#fff';
-        ctx.fillText(div.textContent, 4, y + 4);
-      } else {
-        let x = 4;
-        spans.forEach(span => {
-          ctx.fillStyle = span.style.color || '#fff';
-          ctx.fillText(span.textContent, x, y + 4);
-          x += span.textContent.length * charW;
-        });
-      }
+  if (!state.running || !asciiCanvas.width || !asciiCanvas.height) { showToast('Nothing to capture'); return; }
+  asciiCanvas.toBlob(blob => {
+    if (blob) {
+      download('ascili-screenshot.png', blob, 'image/png');
+      showToast('Screenshot saved');
     }
-  });
-
-  canvas.toBlob(blob => {
-    download('ascili-screenshot.png', blob, 'image/png');
-    showToast('Screenshot saved');
   });
 });
 
@@ -516,69 +856,46 @@ function download(filename, content, type) {
   const blob = content instanceof Blob ? content : new Blob([content], { type });
   a.href     = URL.createObjectURL(blob);
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
 // ─── Topbar Download Dropdown ─────────────────────────────────────────────────
 
-function doDownloadTxt() {
-  const text = getPlainText();
-  if (!text.trim()) { showToast('No ASCII to download — start a source first'); return; }
+async function doDownloadTxt() {
+  if (!state.running && !engine._lastCols) { showToast('No ASCII to download — start a source first'); return; }
+  showToast('Exporting text...');
+  const text = await engine.exportPlainTextAsync();
+  if (!text.trim()) { showToast('No ASCII to download'); return; }
   const ts   = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
   download(`ascili-${ts}.txt`, text, 'text/plain');
-  showToast('Saved .txt');
+  const count = (engine._lastCols * engine._lastRows).toLocaleString();
+  showToast(`Saved ${count} chars as .txt`);
 }
 
-function doDownloadHtml() {
-  const html = getStyledHtml();
+async function doDownloadHtml() {
+  if (!state.running && !engine._lastCols) { showToast('No ASCII to download — start a source first'); return; }
+  showToast('Exporting HTML...');
+  const html = await engine.exportStyledHtmlAsync({
+    monoColor: state.monoColor,
+    fontSize: cfg.fontSize,
+  });
+  if (!html.trim()) { showToast('No ASCII to download'); return; }
   const ts   = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
   download(`ascili-${ts}.html`, html, 'text/html');
   showToast('Saved .html');
 }
 
 function doScreenshot() {
-  if (!asciiOutput.children.length) { showToast('No ASCII to capture — start a source first'); return; }
-  const canvas = document.createElement('canvas');
-  const rect   = asciiContainer.getBoundingClientRect();
-  canvas.width  = rect.width  * devicePixelRatio;
-  canvas.height = rect.height * devicePixelRatio;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(devicePixelRatio, devicePixelRatio);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, rect.width, rect.height);
-  ctx.font         = `${cfg.fontSize}px 'Courier New',monospace`;
-  ctx.textBaseline = 'top';
-
-  const lines = Array.from(asciiOutput.children);
-  const charW  = cfg.fontSize * 0.6;
-  const charH  = cfg.fontSize;
-
-  lines.forEach((div, rowIdx) => {
-    const y = rowIdx * charH;
-    if (cfg.colorMode === 'monochrome') {
-      ctx.fillStyle = '#39ff52';
-      ctx.fillText(div.textContent, 4, y + 4);
-    } else {
-      const spans = div.querySelectorAll('span');
-      if (spans.length === 0) {
-        ctx.fillStyle = '#fff';
-        ctx.fillText(div.textContent, 4, y + 4);
-      } else {
-        let x = 4;
-        spans.forEach(span => {
-          ctx.fillStyle = span.style.color || '#fff';
-          ctx.fillText(span.textContent, x, y + 4);
-          x += span.textContent.length * charW;
-        });
-      }
+  if (!state.running || !asciiCanvas.width || !asciiCanvas.height) { showToast('No ASCII to capture — start a source first'); return; }
+  asciiCanvas.toBlob(blob => {
+    if (blob) {
+      const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+      download(`ascili-${ts}.png`, blob, 'image/png');
+      showToast('Screenshot saved');
     }
-  });
-
-  canvas.toBlob(blob => {
-    const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
-    download(`ascili-${ts}.png`, blob, 'image/png');
-    showToast('Screenshot saved');
   });
 }
 
@@ -587,6 +904,11 @@ btnDownload.addEventListener('click', e => {
   e.stopPropagation();
   const open = dlMenu.classList.toggle('open');
   btnDownload.classList.toggle('open', open);
+});
+
+// Prevent menu clicks from bubbling to document click listener
+dlMenu.addEventListener('click', e => {
+  e.stopPropagation();
 });
 
 // Close on outside click
@@ -598,6 +920,17 @@ document.addEventListener('click', () => {
 dlTxt.addEventListener('click', () => { doDownloadTxt(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 dlHtml.addEventListener('click', () => { doDownloadHtml(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 dlPng.addEventListener('click',  () => { doScreenshot();   dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
+if (dlRecordVideo) {
+  dlRecordVideo.addEventListener('click', () => {
+    dlMenu.classList.remove('open');
+    btnDownload.classList.remove('open');
+    if (liveRecorder.running) {
+      stopLiveRecording();
+    } else {
+      startLiveRecording();
+    }
+  });
+}
 dlVideo.addEventListener('click', () => { openConverter(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 
 // ─── Video Converter ─────────────────────────────────────────────────────────
@@ -614,11 +947,14 @@ const cvCfgColor       = $('cvCfgColor');
 const cvCfgChars       = $('cvCfgChars');
 const cvCfgCols        = $('cvCfgCols');
 const cvCfgFont        = $('cvCfgFont');
-const cvCfgFps         = $('cvCfgFps');
 const cvCfgFmt         = $('cvCfgFmt');
+const cvCfgRes         = $('cvCfgRes');
+const cvCfgFpsOverride = $('cvCfgFpsOverride');
 const cvProgressSection = $('cvProgressSection');
 const cvProgressFill   = $('cvProgressFill');
 const cvProgressPct    = $('cvProgressPct');
+const cvProgressFrames = $('cvProgressFrames');
+const cvSpeedBadge     = $('cvSpeedBadge');
 const cvProgressTime   = $('cvProgressTime');
 const cvProgressEta    = $('cvProgressEta');
 const cvPreviewCanvas  = $('cvPreviewCanvas');
@@ -628,6 +964,7 @@ const cvStart          = $('cvStart');
 const cvStop           = $('cvStop');
 const cvSave           = $('cvSave');
 const cvConvertAnother = $('cvConvertAnother');
+const cvDropZone       = $('cvDropZone');
 
 const cvExporter = new AsciliVideoExporter();
 
@@ -643,11 +980,6 @@ function fmtTime(s) {
   const sec = Math.floor(s % 60);
   if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
   return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-}
-
-function fmtBytes(b) {
-  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
-  return (b/(1024*1024)).toFixed(1) + ' MB';
 }
 
 function charSetLabel(cs) {
@@ -669,7 +1001,6 @@ function cvRefreshSettings() {
   cvCfgChars.textContent = charSetLabel(cfg.charSet);
   cvCfgCols.textContent  = cfg.cols + ' cols';
   cvCfgFont.textContent  = cfg.fontSize + 'px';
-  cvCfgFps.textContent   = cfg.fps + ' FPS';
   const mime = detectMime();
   cvCfgFmt.textContent   = mime.includes('mp4') ? 'MP4 (H.264)' : 'WebM (VP9)';
   cvMimeType = mime;
@@ -677,44 +1008,65 @@ function cvRefreshSettings() {
 
 function cvSetFile(file) {
   cvFile = file;
+  const isPlayerFile = Boolean(state.currentFile && state.currentFile === file);
+
+  // If this is the active video already loaded in the main player, populate metadata immediately
+  if (isPlayerFile && sourceVideo && sourceVideo.videoWidth && sourceVideo.duration) {
+    cvFileInfo.textContent = `${file.name} (Active Video)`;
+    cvFileInfo.classList.add('loaded');
+    cvMeta.textContent = `${sourceVideo.videoWidth}×${sourceVideo.videoHeight}  ·  ${fmtTime(sourceVideo.duration)}  ·  ${fmtBytes(file.size)}`;
+    cvStart.disabled = false;
+    renderFrameToCanvas(sourceVideo, cvPreviewCanvas, cfg);
+  }
+
   if (cvSourceVideo) {
     cvSourceVideo.pause();
     URL.revokeObjectURL(cvSourceVideo.src);
+    cvSourceVideo.remove();
   }
   cvSourceVideo = document.createElement('video');
   cvSourceVideo.muted   = true;
-  cvSourceVideo.preload = 'metadata';
+  cvSourceVideo.preload = 'auto';
+  cvSourceVideo.style.position = 'fixed';
+  cvSourceVideo.style.left     = '-9999px';
+  cvSourceVideo.style.top      = '-9999px';
+  cvSourceVideo.style.width    = '16px';
+  cvSourceVideo.style.height   = '16px';
   cvSourceVideo.src     = URL.createObjectURL(file);
+  document.body.appendChild(cvSourceVideo);
 
   cvSourceVideo.addEventListener('loadedmetadata', () => {
     const dur   = cvSourceVideo.duration;
     const vw    = cvSourceVideo.videoWidth;
     const vh    = cvSourceVideo.videoHeight;
-    cvFileInfo.textContent = file.name;
+    cvFileInfo.textContent = isPlayerFile ? `${file.name} (Active Video)` : file.name;
     cvFileInfo.classList.add('loaded');
     cvMeta.textContent = `${vw}×${vh}  ·  ${fmtTime(dur)}  ·  ${fmtBytes(file.size)}`;
 
-    // Warn for long videos
+    // Info for long videos
     if (dur > 600) {
-      const eta = fmtTime(dur);
+      const estFrames = Math.ceil(dur * parseInt(cvCfgFpsOverride.value, 10));
+      const estMinutes = Math.ceil(estFrames * 0.012 / 60);
       cvWarning.style.display = 'flex';
       cvWarningText.textContent =
-        `This video is ${eta} long. Encoding runs in real time — conversion will take the same duration. ` +
-        `Leave this tab active and your screen on while it runs.`;
+        `This video is ${fmtTime(dur)} long (~${estFrames.toLocaleString()} frames). ` +
+        `Frame-seeking conversion should take roughly ${estMinutes}-${estMinutes * 2} minutes. ` +
+        `Leave this tab active while it runs.`;
     } else {
       cvWarning.style.display = 'none';
     }
 
     cvStart.disabled = false;
-    // Draw a preview still
     renderFrameToCanvas(cvSourceVideo, cvPreviewCanvas, cfg);
   });
 
   cvSourceVideo.addEventListener('error', () => {
-    cvFileInfo.textContent = 'Error loading file';
-    cvFileInfo.classList.remove('loaded');
-    cvMeta.textContent = '';
-    cvStart.disabled = true;
+    if (!isPlayerFile) {
+      cvFileInfo.textContent = 'Error loading file';
+      cvFileInfo.classList.remove('loaded');
+      cvMeta.textContent = '';
+      cvStart.disabled = true;
+    }
   });
 }
 
@@ -729,16 +1081,16 @@ function cvResetUI() {
   cvProgressPct.textContent       = '0%';
   cvProgressTime.textContent      = '';
   cvProgressEta.textContent       = '';
+  cvProgressFrames.textContent    = '';
+  cvSpeedBadge.textContent        = '';
   cvBlob = null;
 }
 
 function openConverter() {
   cvResetUI();
   cvRefreshSettings();
-
-  // Pre-load currently active file if there is one
-  if (state.sourceType === 'file' && cvFile) {
-    // already loaded
+  if (state.currentFile) {
+    cvSetFile(state.currentFile);
   }
   cvOverlay.classList.add('open');
 }
@@ -763,9 +1115,40 @@ cvFileInput.addEventListener('change', () => {
   cvFileInput.value = '';
 });
 
+// Converter drag & drop
+cvDropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  cvDropZone.classList.add('drag-over');
+});
+cvDropZone.addEventListener('dragleave', () => {
+  cvDropZone.classList.remove('drag-over');
+});
+cvDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  cvDropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('video/')) {
+    cvResetUI();
+    cvRefreshSettings();
+    cvSetFile(file);
+    showToast('Loaded: ' + file.name);
+  } else {
+    showToast('Please drop a video file');
+  }
+});
+
 cvStart.addEventListener('click', () => {
   if (!cvSourceVideo || !cvFile) { showToast('Load a video file first'); return; }
   readConfig();
+
+  const targetFps  = parseInt(cvCfgFpsOverride.value, 10) || 30;
+  const resolution = cvCfgRes.value || '1080p';
+  const duration = (cvSourceVideo.duration && isFinite(cvSourceVideo.duration) && cvSourceVideo.duration > 0)
+    ? cvSourceVideo.duration
+    : ((sourceVideo && isFinite(sourceVideo.duration) && sourceVideo.duration > 0) ? sourceVideo.duration : 10);
+  const totalFrames = Math.max(1, Math.ceil(duration * targetFps));
+  let lastFrameNum = 0;
 
   cvProgressSection.style.display = 'block';
   cvDoneSection.style.display     = 'none';
@@ -775,17 +1158,27 @@ cvStart.addEventListener('click', () => {
   cvConvertAnother.style.display  = 'none';
   cvBlob = null;
 
-  // Use the exporter's own internal canvas for recording;
-  // mirror it to the visible preview canvas each frame
   cvExporter.start(cvSourceVideo, cfg, {
-    targetFps: cfg.fps,
+    targetFps,
+    resolution,
     onProgress(pct, elapsed, eta) {
+      const frameNum = Math.round(pct * totalFrames);
       cvProgressFill.style.width  = (pct * 100).toFixed(1) + '%';
       cvProgressPct.textContent   = (pct * 100).toFixed(0) + '%';
       cvProgressTime.textContent  = 'Elapsed: ' + fmtTime(elapsed);
       cvProgressEta.textContent   = eta != null ? 'ETA: ' + fmtTime(eta) : '';
 
-      // Mirror exporter canvas → visible preview (scaled)
+      // Frame counter
+      cvProgressFrames.textContent = `${frameNum.toLocaleString()} / ${totalFrames.toLocaleString()} frames`;
+
+      // Speed badge
+      if (elapsed > 1 && pct > 0.01) {
+        const videoDurationProcessed = pct * cvSourceVideo.duration;
+        const speedMultiplier = videoDurationProcessed / elapsed;
+        cvSpeedBadge.textContent = `${speedMultiplier.toFixed(1)}× speed`;
+      }
+
+      // Mirror exporter canvas → visible preview
       const src = cvExporter.canvas;
       if (src.width && src.height) {
         const pCtx = cvPreviewCanvas.getContext('2d');
@@ -793,6 +1186,8 @@ cvStart.addEventListener('click', () => {
         cvPreviewCanvas.height = src.height;
         pCtx.drawImage(src, 0, 0);
       }
+
+      lastFrameNum = frameNum;
     },
     onComplete(blob, mimeType) {
       cvBlob     = blob;
@@ -805,10 +1200,16 @@ cvStart.addEventListener('click', () => {
       cvProgressPct.textContent      = '100%';
       cvProgressEta.textContent      = '';
       cvProgressTime.textContent     = 'Done';
+      cvProgressFrames.textContent   = `${totalFrames.toLocaleString()} frames`;
 
       cvDoneSection.style.display = 'flex';
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      cvDoneMeta.textContent = `${fmtBytes(blob.size)}  ·  ${ext.toUpperCase()}  ·  ${cfg.cols} cols`;
+      cvDoneMeta.textContent = `${fmtBytes(blob.size)}  ·  ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`;
+
+      // Automatically download the exported video!
+      const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+      download(`ascili-converted-${ts}.${ext}`, blob, mimeType);
+      showToast('Conversion complete! Video downloaded.');
     },
     onError(msg) {
       cvStop.style.display  = 'none';
@@ -859,8 +1260,23 @@ cvOverlay.addEventListener('click', e => {
 // ─── Keyboard Shortcuts ───────────────────────────────────────────────────────
 
 document.addEventListener('keydown', e => {
-  // Ignore when focus is inside a text input
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  // Ignore when focus is inside a text input or select
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+  // Escape closes the converter modal
+  if (e.key === 'Escape') {
+    if (cvOverlay.classList.contains('open')) {
+      if (cvExporter._running) {
+        if (!confirm('Stop the current conversion?')) return;
+        cvExporter.stop();
+      }
+      cvOverlay.classList.remove('open');
+    }
+    return;
+  }
+
+  // Block background shortcuts when modal is open
+  if (cvOverlay.classList.contains('open')) return;
 
   switch (e.key) {
     case 'f': case 'F':
@@ -873,6 +1289,13 @@ document.addEventListener('keydown', e => {
       e.preventDefault(); btnCopy.click(); break;
     case 'r': case 'R':
       e.preventDefault(); applyPreset('classic'); showToast('Settings reset'); break;
+    case 'v': case 'V':
+      e.preventDefault();
+      if (liveRecorder.running) stopLiveRecording();
+      else startLiveRecording();
+      break;
+    case 'g': case 'G':
+      e.preventDefault(); toggleScanlines(); break;
     case '1': applyPreset('classic');   break;
     case '2': applyPreset('matrix');    break;
     case '3': applyPreset('truecolor'); break;
