@@ -49,3 +49,9 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Python & temporary files
+__pycache__/
+*.py[cod]
+modify_css.py
+converted_videos/
