@@ -1,73 +1,204 @@
 # ascii-streamer
 
-A small TypeScript workspace for streaming ASCII-art and related backend services. This project is organized as a pnpm monorepo with a shared API contract, database layer, and application services.
+A high-performance TypeScript workspace for streaming ASCII-art and related backend services. This project combines a React frontend, Node.js API server, and Python-based video processing engine.
 
-## Run and operate
+## 🚀 Quick Start
 
-Use these commands from the repo root:
+### Local Development
 
-- `pnpm install` — install workspace dependencies
-- `pnpm --filter @workspace/api-server run dev` — start the API server on port 5000
-- `pnpm run typecheck` — run the TypeScript typecheck across the workspace
-- `pnpm run build` — typecheck and build every package
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate client hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push schema changes to the dev database
-- Required environment variable: `DATABASE_URL` — Postgres connection string used by the app and DB tooling
+```bash
+# Install dependencies
+pnpm install
 
-## Stack
+# Start API server (port 3000)
+pnpm --filter @workspace/api-server run dev
 
-- pnpm workspaces
-- Node.js 24
-- TypeScript 5.9
-- API: Express 5
-- Database: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`) and `drizzle-zod`
-- API client generation: Orval from the OpenAPI spec
-- Build tooling: esbuild with CJS bundles
+# Start React frontend (port 5173)
+pnpm --filter @workspace/ascili run dev
+```
 
-## Repository map
+Visit http://localhost:3000 to see the app.
 
-- `apps/api-server/` — Express server entrypoints, route handlers, and runtime wiring
-- `packages/api-spec/` — OpenAPI contract and generated API artifacts
-- `packages/db/` — database schema, migrations, and query helpers
-- `packages/shared/` — reusable types, utilities, and cross-package contracts
-- `package.json` — workspace scripts and shared package configuration
+### Docker
 
-Use the source-of-truth files below as the primary reference when making changes:
+```bash
+# Start with PostgreSQL
+docker-compose up -d
 
-- DB schema: `packages/db/src/schema.ts` (or the schema entry under the DB package)
-- API contract: `packages/api-spec/` and generated output under the API package
-- Shared validation: `packages/shared/` and generated Zod models
+# Access at http://localhost:3000
+```
 
-## Architecture decisions
+## 📦 Stack
 
-- The repo is split into package boundaries so API, DB, and shared types can evolve independently without coupling runtime code.
-- The OpenAPI spec is treated as the contract source of truth; generated clients and Zod schemas should be refreshed via codegen instead of hand-edited.
-- Database access is isolated behind the DB package to keep query logic close to schema definitions and easier to validate.
-- The workspace favors explicit env configuration over implicit defaults so local setup and deployment behavior remain predictable.
-- Type safety is enforced across the monorepo, with generated types and validation models used to reduce drift between API and backend logic.
+- **Frontend:** React 18 + Vite + TypeScript
+- **API:** Node.js 24 + Express 5 + TypeScript
+- **Database:** PostgreSQL + Drizzle ORM
+- **Validation:** Zod v4
+- **Deployment:** Docker, Railway, Render, Vercel
 
-## Product
+## 📁 Repository Map
 
-This app is intended to provide a simple, high-signal way to generate and stream ASCII-based output over a lightweight API. The current focus is on backend infrastructure, shared contracts, and reusable platform primitives that make future user-facing features easier to build and extend.
+```
+ascii-streamer/
+├── artifacts/
+│   ├── api-server/      Express.js API server + health checks
+│   ├── ascili/          React frontend (Vite + TypeScript)
+│   └── mockup-sandbox/  UI component sandbox
+├── lib/
+│   ├── api-spec/        OpenAPI contract
+│   ├── api-zod/         Generated Zod validators
+│   ├── api-client-react/ React hooks for API
+│   └── db/              Database schema + migrations
+├── ai_video_engine/     Python video processing (optional)
+├── scripts/             Dev utilities
+├── Dockerfile           Multi-stage build
+├── docker-compose.yml   Local development
+└── railway.json / render.yaml  Production configs
+```
 
-## User preferences
+## 🔧 Run and Operate
 
-- Keep changes small, explicit, and easy to reason about.
-- Prefer existing package boundaries over ad hoc cross-package imports.
-- Regenerate API artifacts after updating the OpenAPI contract rather than patching generated files by hand.
-- Keep environment assumptions documented and avoid introducing hidden runtime requirements.
+```bash
+# Install
+pnpm install
 
-## Gotchas
+# Type check
+pnpm run typecheck
 
-- Always run the relevant typecheck or build command after changing shared contracts or schema code.
-- If the API spec changes, run codegen before expecting the generated hooks or validators to be current.
-- Do not treat the generated files as the source of truth; update the spec or schema definition first, then regenerate.
-- The required `DATABASE_URL` environment variable must be set before running DB or server commands that depend on Postgres.
+# Build everything
+pnpm run build
 
-## Pointers
+# Start API server
+pnpm --filter @workspace/api-server run dev
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
-- Keep this document aligned with the actual repo layout as the project grows.
-- If a new subsystem is introduced, add it to the repository map and architecture decisions so onboarding stays fast.
+# Start React app
+pnpm --filter @workspace/ascili run dev
 
+# Run tests
+pnpm run test
+
+# Database operations
+pnpm --filter @workspace/db run push
+```
+
+## 🌐 API Endpoints
+
+- `GET /` - React frontend (served from `/public`)
+- `GET /api/health` - Server health check
+- `GET /api/status` - API status
+
+## 🚢 Deploy
+
+See [DEPLOY.md](./DEPLOY.md) for detailed deployment instructions.
+
+### Quick Deploy Options
+
+**Railway (Recommended):**
+```bash
+railway link && railway up
+```
+
+**Render:**
+1. Connect GitHub repo
+2. Auto-detects `render.yaml`
+3. Deploy!
+
+**Docker:**
+```bash
+docker build -t ascii-streamer .
+docker run -p 3000:3000 ascii-streamer
+```
+
+## 🏗️ Architecture
+
+### Request Flow
+
+1. Browser requests `/` → Express serves React app from `/public`
+2. React app calls `/api/*` endpoints
+3. Express API routes to handlers
+4. Handlers query PostgreSQL via Drizzle ORM
+5. Responses validated with Zod schemas
+
+### Build Process
+
+1. TypeScript monorepo built with pnpm workspaces
+2. API server compiled to `/artifacts/api-server/dist`
+3. React app built to `/artifacts/ascili/dist`
+4. Docker copies built artifacts into final image
+5. Production image runs Node.js server on port 3000
+
+### Environment Configuration
+
+**Development (.env.local):**
+```env
+PORT=3000
+NODE_ENV=development
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ascii_streamer
+```
+
+**Production (Railway/Render):**
+- Set via platform dashboard
+- `DATABASE_URL` auto-linked by platform
+- `PORT` defaults to 3000
+
+## 🔐 Security & Best Practices
+
+- CORS enabled for frontend-to-API communication
+- Environment variables never committed to repo
+- Docker image uses Alpine Linux (minimal attack surface)
+- Health checks for deployment monitoring
+- TypeScript for type safety across codebase
+
+## 🐛 Troubleshooting
+
+**Port 3000 already in use:**
+```bash
+lsof -ti:3000 | xargs kill -9
+```
+
+**DATABASE_URL not set:**
+- Development: See `.env.example`
+- Production: Configure in Railway/Render dashboard
+
+**Build fails:**
+```bash
+pnpm install --force
+pnpm run build
+```
+
+**Docker build slow:**
+```bash
+docker system prune -a
+```
+
+## 📚 Architecture Decisions
+
+- **Monorepo:** pnpm workspaces allow independent package evolution
+- **OpenAPI contract:** Single source of truth for API - regenerate Zod/client after changes
+- **Database isolation:** Queries centralized in `lib/db` package
+- **Type safety:** Generated types prevent drift between frontend/backend
+- **Production-ready:** Includes health checks, logging, error handling
+
+## 👥 User Preferences
+
+- Keep changes small and explicit
+- Regenerate API artifacts after spec updates
+- Document environment assumptions
+- Avoid hidden runtime dependencies
+
+## ⚡ Performance
+
+- React app pre-built and served as static files
+- API runs with Node.js event loop optimization
+- Database connection pooling (Drizzle ORM)
+- Logging disabled in production (unless `LOG_LEVEL=debug`)
+
+## 📖 See Also
+
+- [DEPLOY.md](./DEPLOY.md) - Detailed deployment guide
+- [ai_video_engine/README.md](./ai_video_engine/README.md) - Python video engine docs
+- [GitHub Actions](./.github/workflows/deploy.yml) - CI/CD pipeline
+
+## 📝 License
+
+MIT
